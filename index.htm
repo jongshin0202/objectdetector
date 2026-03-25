@@ -2,193 +2,114 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Touch & Search AI V14</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Touch & Speak AI</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
     <style>
-        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
-        #video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
-        #canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; height: 100vh; width: 100vw; touch-action: none; }
+        #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 80%; z-index: 5; background: transparent; }
+        #label-container { position: absolute; top: 10%; width: 100%; text-align: center; color: #00ff00; font-size: 42px; font-weight: bold; z-index: 10; text-shadow: 2px 2px 10px #000; pointer-events: none; }
         
-        #header { position: absolute; top: 0; width: 100%; text-align: center; background: rgba(0,0,0,0.8); z-index: 10; padding: 15px 0; border-bottom: 2px solid #00ff00; pointer-events: none; }
-        #label-container { color: #00ff00; font-size: 22px; font-weight: bold; }
+        .controls { position: absolute; bottom: 20px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 15px; z-index: 20; padding-bottom: 20px; }
+        .slider-container { width: 80%; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 15px; text-align: center; }
+        input[type=range] { width: 100%; cursor: pointer; }
         
-        #footer { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.9); padding: 15px 0 30px 0; z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        .row { display: flex; gap: 8px; width: 95%; justify-content: center; flex-wrap: wrap; }
-        
-        .btn { padding: 12px 15px; font-size: 12px; background: #333; color: #fff; border: 1px solid #555; border-radius: 8px; font-weight: bold; cursor: pointer; min-width: 90px; }
-        .active-btn { background: #00ff00 !important; color: #000 !important; border-color: #00ff00; }
-        #startBtn { background: #00ff00; color: #000; width: 90%; font-size: 18px; margin-bottom: 10px; }
-        
-        #search-box { width: 85%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #111; color: #00ff00; text-align: center; font-size: 14px; }
-        #log-text { font-size: 10px; color: #666; }
+        button { padding: 15px 30px; font-size: 16px; font-weight: bold; border-radius: 50px; border: none; cursor: pointer; background: white; color: black; }
+        #startBtn { background: #00ff00; padding: 25px 50px; font-size: 20px; }
     </style>
 </head>
 <body>
+
+    <div id="label-container">TAP TO START</div>
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas" onclick="handleTouch(event)"></canvas>
     
-    <div id="header">
-        <div id="label-container">AI SYSTEM STANDBY</div>
-    </div>
-
-    <div id="footer">
-        <button class="btn" id="startBtn" onclick="init()">🚀 LAUNCH AI SYSTEM</button>
-
-        <div id="controls" style="display:none; width: 100%; text-align:center;">
-            <input type="text" id="search-box" placeholder="Search (e.g. bottle, cell phone)..." oninput="searchTerm = this.value">
-            
-            <div class="row" style="margin-top: 10px;">
-                <button class="btn" id="vibeBtn" onclick="vibrateOn = !vibrateOn; this.classList.toggle('active-btn')">📳 ALERTS</button>
-                <button class="btn" id="toneBtn" onclick="toneOn = !toneOn; this.classList.toggle('active-btn')">🎵 TONES</button>
-                <button class="btn" id="voiceBtn" onclick="voiceOn = !voiceOn; this.classList.toggle('active-btn')">🔊 VOICE</button>
+    <div id="overlay" onclick="handleTouch()"></div>
+    
+    <div class="controls">
+        <div id="ui-elements" style="display:none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 15px;">
+            <div class="slider-container">
+                <label>Sensitivity: <span id="sensValue">50</span>%</label><br>
+                <input type="range" id="sensitivity" min="1" max="99" value="50" oninput="updateSens(this.value)">
             </div>
-            <div class="row">
-                <button class="btn" onclick="savePhoto()">📷 SAVE</button>
-                <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
-                <button class="btn" onclick="location.reload()" style="background:#400;">♻️ RESET</button>
-            </div>
+            <button id="switchBtn" onclick="switchCamera()">SWITCH CAMERA</button>
         </div>
-        <div id="log-text">Log: Ready.</div>
+        <button id="startBtn" onclick="initApp()">START</button>
     </div>
 
     <script>
-        const log = (msg) => document.getElementById('log-text').innerText = msg;
-        const label = document.getElementById('label-container');
         const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        let detector, currentStream, videoDevices = [], devIdx = 0;
-        let lastPredictions = [], searchTerm = "", lastAlertTime = 0;
-        let voiceOn = false, vibrateOn = false, toneOn = false;
+        const label = document.getElementById('label-container');
+        const sensInput = document.getElementById('sensitivity');
+        const sensDisp = document.getElementById('sensValue');
+        let model = null;
+        let currentStream = null;
+        let facingMode = 'environment';
+        let threshold = 0.5;
 
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function updateSens(val) {
+            sensDisp.innerText = val;
+            threshold = val / 100;
+        }
 
-        async function init() {
-            log("Initializing Hardware...");
+        async function initApp() {
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('ui-elements').style.display = 'flex';
+            label.innerText = "LOADING AI...";
             try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                videoDevices = devices.filter(d => d.kind === 'videoinput');
-                await startCamera(videoDevices[devIdx]?.deviceId);
-
-                log("Downloading Neural Network...");
-                detector = await cocoSsd.load();
-                
-                document.getElementById('startBtn').style.display = 'none';
-                document.getElementById('controls').style.display = 'block';
-                log("AI Active. Tap objects or use Search.");
-                detect();
-            } catch (e) { log("Error: " + e.message); }
+                model = await mobilenet.load();
+                await startCamera();
+                label.innerText = "TOUCH SCREEN";
+            } catch (e) {
+                label.innerText = "ERROR: " + e.message;
+            }
         }
 
-        async function startCamera(id) {
+        async function startCamera() {
             if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-            currentStream = await navigator.mediaDevices.getUserMedia({ 
-                video: id ? { deviceId: { exact: id } } : { facingMode: 'environment' } 
-            });
-            video.srcObject = currentStream;
-            await video.play();
+            try {
+                const constraints = {
+                    video: { facingMode: { ideal: facingMode } },
+                    audio: false
+                };
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints)
+                    .catch(() => navigator.mediaDevices.getUserMedia({ video: true }));
+                
+                video.srcObject = currentStream;
+                video.onloadedmetadata = () => video.play();
+            } catch (e) {
+                alert("Camera failed: " + e.message);
+            }
         }
 
-        async function detect() {
-            if (!detector || video.readyState !== 4) { requestAnimationFrame(detect); return; }
+        async function switchCamera() {
+            facingMode = (facingMode === 'environment') ? 'user' : 'environment';
+            await startCamera();
+        }
+
+        async function handleTouch() {
+            if (!model) return;
+
+            // Vibrate (100ms)
+            if (navigator.vibrate) navigator.vibrate(100);
+
+            const predictions = await model.classify(video);
             
-            const predictions = await detector.detect(video);
-            lastPredictions = predictions;
-
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            let foundSearch = false;
-
-            predictions.forEach(p => {
-                const isMatch = searchTerm !== "" && p.class.toLowerCase().includes(searchTerm.toLowerCase());
+            if (predictions.length > 0) {
+                const topResult = predictions[0];
                 
-                // Draw Boxes
-                ctx.strokeStyle = isMatch ? "#ff0000" : "#00ff00";
-                ctx.lineWidth = isMatch ? 12 : 4;
-                ctx.strokeRect(...p.bbox);
+                // Only act if probability is higher than our threshold
+                if (topResult.probability >= threshold) {
+                    const resultText = topResult.className.split(',')[0].toUpperCase();
+                    label.innerText = resultText;
 
-                if (isMatch && p.score > 0.5) {
-                    foundSearch = true;
-                    handleAlerts(p.class);
+                    const utterance = new SpeechSynthesisUtterance(resultText);
+                    window.speechSynthesis.speak(utterance);
+                } else {
+                    label.innerText = "UNSURE...";
                 }
-            });
-
-            if (foundSearch) {
-                label.innerText = `SEARCH MATCH: ${searchTerm.toUpperCase()}`;
-            } else if (predictions.length > 0) {
-                label.innerText = predictions[0].class.toUpperCase();
-            } else {
-                label.innerText = "SCANNING...";
             }
-
-            requestAnimationFrame(detect);
-        }
-
-        // --- NEW: TOUCH IDENTIFY & VIBRATE ---
-        function handleTouch(e) {
-            // Short vibration on every touch
-            if (navigator.vibrate) navigator.vibrate(40);
-
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = video.videoWidth / rect.width;
-            const scaleY = video.videoHeight / rect.height;
-            const tx = (e.clientX - rect.left) * scaleX;
-            const ty = (e.clientY - rect.top) * scaleY;
-
-            const found = lastPredictions.find(p => {
-                const [bx, by, bw, bh] = p.bbox;
-                return tx >= bx && tx <= bx+bw && ty >= by && ty <= by+bh;
-            });
-
-            if (found) {
-                const name = found.class.toUpperCase();
-                label.innerText = `TOUCHED: ${name}`;
-                speak(name);
-                
-                // Visual feedback: Highlight touched box
-                ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-                ctx.fillRect(...found.bbox);
-            }
-        }
-
-        function handleAlerts(name) {
-            const now = Date.now();
-            if (now - lastAlertTime < 3000) return;
-            
-            if (vibrateOn) navigator.vibrate([300, 100, 300]);
-            if (toneOn) playBeep();
-            if (voiceOn) speak("Found " + name);
-            
-            lastAlertTime = now;
-        }
-
-        function playBeep() {
-            const osc = audioCtx.createOscillator();
-            const g = audioCtx.createGain();
-            osc.connect(g); g.connect(audioCtx.destination);
-            osc.frequency.value = 1000; g.gain.value = 0.1;
-            osc.start(); osc.stop(audioCtx.currentTime + 0.15);
-        }
-
-        function speak(t) { 
-            window.speechSynthesis.cancel(); 
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance(t)); 
-        }
-
-        function cycleCameras() { devIdx = (devIdx + 1) % videoDevices.length; startCamera(videoDevices[devIdx].deviceId); }
-        
-        function savePhoto() {
-            const temp = document.createElement('canvas');
-            temp.width = video.videoWidth; temp.height = video.videoHeight;
-            const tCtx = temp.getContext('2d');
-            tCtx.drawImage(video, 0, 0); tCtx.drawImage(canvas, 0, 0);
-            const a = document.createElement('a');
-            a.download = `AI_Capture.png`; a.href = temp.toDataURL(); a.click();
         }
     </script>
 </body>
