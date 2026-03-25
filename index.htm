@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice AI Detector</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <style>
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+        #video { position: absolute; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; display: none; }
+        #label-container { position: absolute; top: 40px; width: 100%; text-align: center; color: #00ff00; font-size: 32px; font-weight: bold; z-index: 10; text-shadow: 2px 2px 4px #000; }
+        #start-btn { z-index: 100; padding: 20px 40px; font-size: 24px; background: #00ff00; color: black; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        #status { position: absolute; bottom: 10px; width: 100%; text-align: center; font-size: 12px; color: #aaa; z-index: 10; }
+    </style>
+</head>
+<body>
+    <button id="start-btn">START AI DETECTOR</button>
+    <div id="label-container"></div>
+    <video id="video" autoplay playsinline muted></video>
+    <div id="status">Status: Waiting for user...</div>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const video = document.getElementById('video');
+        const label = document.getElementById('label-container');
+        const statusText = document.getElementById('status');
+        let lastSpoken = "";
+
+        startBtn.onclick = async () => {
+            startBtn.style.display = 'none';
+            video.style.display = 'block';
+            init();
+        };
+
+        async function init() {
+            try {
+                statusText.innerText = "Status: Loading AI Libraries...";
+                while (typeof mobilenet === 'undefined') {
+                    await new Promise(r => setTimeout(r, 500));
+                }
+
+                statusText.innerText = "Status: Starting Camera...";
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                video.srcObject = stream;
+
+                statusText.innerText = "Status: Downloading Brain...";
+                const model = await mobilenet.load();
+                
+                statusText.innerText = "Status: Running!";
+                label.innerText = "READY";
+
+                async function predict() {
+                    const predictions = await model.classify(video);
+                    if (predictions.length > 0) {
+                        const topResult = predictions[0].className.split(',')[0].toUpperCase();
+                        label.innerText = topResult;
+
+                        if (topResult !== lastSpoken) {
+                            speak(topResult);
+                            lastSpoken = topResult;
+                        }
+                    }
+                    requestAnimationFrame(predict);
+                }
+                predict();
+            } catch (e) {
+                statusText.innerText = "Error: " + e.message;
+            }
+        }
+
+        function speak(text) {
+            const msg = new SpeechSynthesisUtterance(text.toLowerCase());
+            window.speechSynthesis.speak(msg);
+        }
+    </script>
+</body>
+</html>
