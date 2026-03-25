@@ -3,29 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>AI Touch Detector</title>
+    <title>AI Box Detector</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
-        
-        /* Full Screen Camera */
         #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+        #touch-layer { position: absolute; top: 0; left: 0; width: 100%; height: 80%; z-index: 10; background: transparent; }
         
-        /* Invisible Touch Layer */
-        #touch-layer { position: absolute; top: 0; left: 0; width: 100%; height: 75%; z-index: 5; background: transparent; }
+        #label-container { position: absolute; top: 8%; width: 100%; text-align: center; color: #00ff00; font-size: 32px; font-weight: bold; z-index: 15; text-shadow: 2px 2px 10px #000; pointer-events: none; }
         
-        /* Result Text */
-        #label-container { position: absolute; top: 10%; width: 100%; text-align: center; color: #00ff00; font-size: 40px; font-weight: bold; z-index: 10; text-shadow: 2px 2px 10px #000; pointer-events: none; }
+        .bottom-panel { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); z-index: 20; padding: 15px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .slider-box { width: 85%; text-align: center; font-size: 14px; }
+        input[type=range] { width: 100%; height: 30px; }
         
-        /* Bottom Control Panel */
-        .bottom-panel { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.8); z-index: 20; padding: 20px 0; display: flex; flex-direction: column; align-items: center; gap: 15px; }
-        
-        .slider-box { width: 80%; text-align: center; }
-        input[type=range] { width: 100%; height: 25px; cursor: pointer; }
-        
-        button { padding: 15px 30px; font-size: 16px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; }
-        #startBtn { background: #00ff00; color: black; padding: 25px 60px; font-size: 22px; }
+        button { padding: 12px 25px; font-size: 14px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; }
+        #startBtn { background: #00ff00; color: black; padding: 20px 50px; font-size: 20px; }
         #switchBtn { background: #444; color: white; display: none; }
     </style>
 </head>
@@ -33,13 +27,14 @@
 
     <div id="label-container">TAP START</div>
     <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
     <div id="touch-layer" onclick="handleTouch()"></div>
     
     <div class="bottom-panel">
-        <div id="controls" style="display:none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 15px;">
+        <div id="controls" style="display:none; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px;">
             <button id="switchBtn" onclick="switchCamera()">SWITCH CAMERA</button>
             <div class="slider-box">
-                <label>Sensitivity: <span id="sVal">50</span>%</label>
+                <label>Sensitivity (High = More Active): <span id="sVal">50</span></label>
                 <input type="range" id="sens" min="1" max="99" value="50" oninput="document.getElementById('sVal').innerText=this.value">
             </div>
         </div>
@@ -49,15 +44,18 @@
     <script>
         let model, stream, facing = 'environment';
         const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
         const label = document.getElementById('label-container');
 
         async function initApp() {
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('controls').style.display = 'flex';
-            label.innerText = "LOADING...";
-            model = await mobilenet.load();
+            label.innerText = "LOADING AI...";
+            model = await cocoSsd.load();
             await startCam();
-            label.innerText = "TOUCH TO DETECT";
+            label.innerText = "TOUCH SCREEN";
+            renderLoop(); // Start drawing boxes
         }
 
         async function startCam() {
@@ -67,8 +65,13 @@
                     video: { facingMode: { ideal: facing } }
                 }).catch(() => navigator.mediaDevices.getUserMedia({ video: true }));
                 video.srcObject = stream;
-                video.onloadedmetadata = () => { video.play(); document.getElementById('switchBtn').style.display = 'block'; };
-            } catch (e) { alert("Camera Error"); }
+                video.onloadedmetadata = () => {
+                    video.play();
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    document.getElementById('switchBtn').style.display = 'block';
+                };
+            } catch (e) { alert("Camera Error: " + e.message); }
         }
 
         function switchCamera() {
@@ -76,25 +79,44 @@
             startCam();
         }
 
+        async function renderLoop() {
+            // Continuously draw bounding boxes
+            const predictions = await model.detect(video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            predictions.forEach(p => {
+                ctx.strokeStyle = "#00FF00";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(p.bbox[0], p.bbox[1], p.bbox[2], p.bbox[3]);
+            });
+            requestAnimationFrame(renderLoop);
+        }
+
         async function handleTouch() {
             if (!model) return;
             
-            // 1. Vibrate phone
-            if (navigator.vibrate) navigator.vibrate(80);
+            // Strong Vibration Pattern
+            if (navigator.vibrate) {
+                navigator.vibrate([100, 50, 100]); 
+            }
 
-            // 2. Predict
-            const predictions = await model.classify(video);
-            const threshold = document.getElementById('sens').value / 100;
+            const predictions = await model.detect(video);
+            
+            // Higher number = Lower threshold (More sensitive)
+            const sensitivity = document.getElementById('sens').value;
+            const threshold = (100 - sensitivity) / 100;
 
-            if (predictions.length > 0 && predictions[0].probability >= threshold) {
-                const text = predictions[0].className.split(',')[0].toUpperCase();
-                label.innerText = text;
-                
-                // 3. Voice Output
-                const speech = new SpeechSynthesisUtterance(text);
-                window.speechSynthesis.speak(speech);
-            } else {
-                label.innerText = "NOT SURE...";
+            if (predictions.length > 0) {
+                const best = predictions[0];
+                if (best.score >= threshold) {
+                    const text = best.class.toUpperCase();
+                    label.innerText = text;
+                    
+                    const speech = new SpeechSynthesisUtterance(text);
+                    window.speechSynthesis.speak(speech);
+                } else {
+                    label.innerText = "NOT SURE...";
+                }
             }
         }
     </script>
