@@ -3,110 +3,200 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Object Detector V11</title>
+    <title>Search AI Detector V13</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
-        #canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
-        #header { position: absolute; top: 0; width: 100%; text-align: center; background: rgba(0,0,0,0.8); z-index: 10; padding: 15px 0; border-bottom: 2px solid #00ff00; }
-        #label-container { color: #00ff00; font-size: 24px; font-weight: bold; }
-        #footer { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); padding: 15px 0 30px 0; z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        .row { display: flex; gap: 10px; margin-bottom: 5px; }
-        .btn { padding: 12px 20px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 8px; font-weight: bold; }
-        #voiceBtn { background: #ffcc00; }
-        .slider-box { width: 80%; text-align: center; font-size: 12px; color: #aaa; }
-        input[type=range] { width: 100%; accent-color: #00ff00; margin-top: 5px; }
+        #canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
+        #header { position: absolute; top: 0; width: 100%; text-align: center; background: rgba(0,0,0,0.85); z-index: 10; padding: 10px 0; border-bottom: 2px solid #00ff00; }
+        #label-container { color: #00ff00; font-size: 22px; font-weight: bold; }
+        
+        #footer { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.9); padding: 10px 0 25px 0; z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .row { display: flex; gap: 5px; width: 95%; justify-content: center; flex-wrap: wrap; }
+        
+        .btn { padding: 10px 15px; font-size: 12px; background: #333; color: #fff; border: 1px solid #555; border-radius: 6px; font-weight: bold; cursor: pointer; min-width: 80px; }
+        .active-btn { background: #00ff00 !important; color: #000 !important; border-color: #00ff00; }
+        #startBtn { background: #00ff00; color: #000; width: 90%; font-size: 16px; margin-bottom: 5px; }
+        
+        #search-box { width: 85%; padding: 10px; border-radius: 6px; border: none; background: #222; color: #00ff00; text-align: center; font-size: 14px; border: 1px solid #444; }
+        #log-text { font-size: 10px; color: #666; }
     </style>
 </head>
 <body>
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-    <div id="header"><div id="label-container">STANDBY</div></div>
+    <canvas id="canvas" onclick="handleTouch(event)"></canvas>
+    
+    <div id="header">
+        <div id="label-container">TAP START SYSTEM</div>
+        <div style="font-size: 10px; color: #888;">COCO-SSD Engine v13.0</div>
+    </div>
 
     <div id="footer">
-        <button class="btn" id="startBtn" onclick="init()" style="width: 80%; font-size: 18px;">🚀 START AI SYSTEM</button>
-        
-        <div class="row" id="mainControls" style="display:none;">
-            <button class="btn" onclick="savePhoto()">📷 SAVE</button>
-            <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
-            <button class="btn" id="voiceBtn" onclick="toggleVoice()">🔊 VOICE: OFF</button>
-        </div>
+        <button class="btn" id="startBtn" onclick="init()">🚀 LAUNCH AI</button>
 
-        <div class="slider-box" id="sliderUI" style="display:none;">
-            Sensitivity: <span id="conf-val">65</span>% (Higher = More Accurate)
-            <input type="range" min="10" max="95" value="65" oninput="updateConf(this.value)">
+        <div id="controls" style="display:none; width: 100%; text-align:center;">
+            <input type="text" id="search-box" placeholder="Type to search (e.g. cup, cell phone)..." oninput="updateSearch(this.value)">
+            
+            <div class="row" style="margin-top: 10px;">
+                <button class="btn" id="vibrateBtn" onclick="toggleVibrate()">📳 VIBE: OFF</button>
+                <button class="btn" id="toneBtn" onclick="toggleTone()">🎵 TONE: OFF</button>
+                <button class="btn" id="voiceBtn" onclick="toggleVoice()">🔊 VOICE: OFF</button>
+            </div>
+            <div class="row">
+                <button class="btn" onclick="savePhoto()">📷 SAVE</button>
+                <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
+                <button class="btn" onclick="location.reload()" style="background:#440000;">♻️ RESET</button>
+            </div>
         </div>
-        <div style="font-size: 10px; color: #555;" id="log-text">Ready.</div>
+        <div id="log-text">Status: Ready.</div>
     </div>
 
     <script>
         const log = (msg) => document.getElementById('log-text').innerText = msg;
+        const label = document.getElementById('label-container');
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        let detector, currentStream, voiceEnabled = false, minConf = 0.65, videoDevices = [], devIdx = 0, lastAnnounced = "";
+        
+        let detector, currentStream, videoDevices = [], devIdx = 0, lastPredictions = [];
+        let voiceOn = false, vibrateOn = false, toneOn = false;
+        let searchTerm = "", lastAlertTime = 0;
+
+        // Audio Context for the Tone
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
         async function init() {
-            log("Opening camera...");
+            log("Accessing Hardware...");
             const devices = await navigator.mediaDevices.enumerateDevices();
             videoDevices = devices.filter(d => d.kind === 'videoinput');
             await startCamera(videoDevices[devIdx]?.deviceId);
 
-            log("Downloading AI Brain... Please wait 10s...");
-            document.getElementById('label-container').innerText = "DOWNLOADING...";
+            log("Downloading AI... (25MB)");
             detector = await cocoSsd.load();
             
-            log("System Active!");
             document.getElementById('startBtn').style.display = 'none';
-            document.getElementById('mainControls').style.display = 'flex';
-            document.getElementById('sliderUI').style.display = 'block';
+            document.getElementById('controls').style.display = 'block';
+            log("AI Active. Searching for: nothing");
             detect();
         }
 
         async function startCamera(id) {
             if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-            currentStream = await navigator.mediaDevices.getUserMedia({ video: id ? { deviceId: { exact: id } } : { facingMode: 'environment' } });
+            currentStream = await navigator.mediaDevices.getUserMedia({ 
+                video: id ? { deviceId: { exact: id } } : { facingMode: 'environment' } 
+            });
             video.srcObject = currentStream;
             await video.play();
         }
 
-        function cycleCameras() { devIdx = (devIdx + 1) % videoDevices.length; startCamera(videoDevices[devIdx].deviceId); }
-        function updateConf(val) { minConf = val / 100; document.getElementById('conf-val').innerText = val; }
-        function toggleVoice() { voiceEnabled = !voiceEnabled; document.getElementById('voiceBtn').innerText = voiceEnabled ? "🔊 VOICE: ON" : "🔊 VOICE: OFF"; }
-
         async function detect() {
             if (!detector || video.readyState !== 4) { requestAnimationFrame(detect); return; }
             const predictions = await detector.detect(video);
+            lastPredictions = predictions;
+
             canvas.width = video.videoWidth; canvas.height = video.videoHeight;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const filtered = predictions.filter(p => p.score >= minConf);
-            if (filtered.length > 0) {
-                const top = filtered[0];
-                const name = top.class.toUpperCase();
-                document.getElementById('label-container').innerText = `${name} (${Math.round(top.score*100)}%)`;
-                ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 8; ctx.strokeRect(...top.bbox);
-                if (voiceEnabled && name !== lastAnnounced) {
-                    window.speechSynthesis.cancel();
-                    window.speechSynthesis.speak(new SpeechSynthesisUtterance(name));
-                    lastAnnounced = name;
+            let foundTarget = false;
+
+            predictions.forEach(p => {
+                const isMatch = searchTerm !== "" && p.class.toLowerCase().includes(searchTerm.toLowerCase());
+                ctx.strokeStyle = isMatch ? "#ff0000" : "#00ff00";
+                ctx.lineWidth = isMatch ? 12 : 4;
+                ctx.strokeRect(...p.bbox);
+
+                if (isMatch && p.score > 0.5) {
+                    foundTarget = true;
+                    label.innerText = `FOUND: ${p.class.toUpperCase()}!`;
+                    triggerAlerts(p.class);
                 }
-            } else { document.getElementById('label-container').innerText = "SCANNING..."; }
+            });
+
+            if (!foundTarget && predictions.length > 0) {
+                label.innerText = predictions[0].class.toUpperCase();
+            } else if (!foundTarget) {
+                label.innerText = "SCANNING...";
+            }
+
             requestAnimationFrame(detect);
         }
 
+        function triggerAlerts(name) {
+            const now = Date.now();
+            if (now - lastAlertTime < 2000) return; // Wait 2 seconds between alerts
+            
+            if (vibrateOn) navigator.vibrate([200, 100, 200]);
+            if (toneOn) playTone();
+            if (voiceOn) speak(name);
+            
+            lastAlertTime = now;
+        }
+
+        function playTone() {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, audioCtx.currentTime); // High pitch
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.2);
+        }
+
+        function updateSearch(val) {
+            searchTerm = val.trim();
+            log(searchTerm === "" ? "Scanning all..." : `Searching for: ${searchTerm}`);
+        }
+
+        function handleTouch(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = video.videoWidth / rect.width;
+            const scaleY = video.videoHeight / rect.height;
+            const tx = (e.clientX - rect.left) * scaleX;
+            const ty = (e.clientY - rect.top) * scaleY;
+
+            let found = lastPredictions.find(p => {
+                const [bx, by, bw, bh] = p.bbox;
+                return tx >= bx && tx <= bx+bw && ty >= by && ty <= by+bh;
+            });
+
+            if (found) {
+                label.innerText = `TAPPED: ${found.class.toUpperCase()}`;
+                speak(found.class);
+                navigator.vibrate(50);
+            }
+        }
+
+        // Toggles
+        function toggleVibrate() { 
+            vibrateOn = !vibrateOn; 
+            document.getElementById('vibrateBtn').classList.toggle('active-btn', vibrateOn);
+            document.getElementById('vibrateBtn').innerText = vibrateOn ? "📳 VIBE: ON" : "📳 VIBE: OFF";
+            if (vibrateOn) navigator.vibrate(200);
+        }
+        function toggleTone() { 
+            toneOn = !toneOn; 
+            document.getElementById('toneBtn').classList.toggle('active-btn', toneOn);
+            document.getElementById('toneBtn').innerText = toneOn ? "🎵 TONE: ON" : "🎵 TONE: OFF";
+            if (toneOn) playTone();
+        }
+        function toggleVoice() { 
+            voiceOn = !voiceOn; 
+            document.getElementById('voiceBtn').classList.toggle('active-btn', voiceOn);
+            document.getElementById('voiceBtn').innerText = voiceOn ? "🔊 VOICE: ON" : "🔊 VOICE: OFF";
+        }
+
+        function speak(t) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(t)); }
+        function cycleCameras() { devIdx = (devIdx + 1) % videoDevices.length; startCamera(videoDevices[devIdx].deviceId); }
         function savePhoto() {
             const temp = document.createElement('canvas');
             temp.width = video.videoWidth; temp.height = video.videoHeight;
             const tCtx = temp.getContext('2d');
-            tCtx.drawImage(video, 0, 0);
-            tCtx.drawImage(canvas, 0, 0);
-            const a = document.createElement('a');
-            a.download = `AI_Detect_${Date.now()}.png`;
-            a.href = temp.toDataURL();
-            a.click();
+            tCtx.drawImage(video, 0, 0); tCtx.drawImage(canvas, 0, 0);
+            const a = document.createElement('a'); a.download = `AI_Find.png`; a.href = temp.toDataURL(); a.click();
         }
     </script>
 </body>
