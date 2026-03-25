@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Voice AI Detector</title>
+    <title>High-Accuracy AI Detector</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
     <style>
@@ -12,99 +12,104 @@
         #label-container { 
             position: absolute; top: 5%; width: 100%; text-align: center; 
             color: #00ff00; font-size: 32px; font-weight: bold; z-index: 10; 
-            text-shadow: 2px 2px 10px #000; background: rgba(0,0,0,0.3); padding: 15px 0;
+            text-shadow: 2px 2px 10px #000; background: rgba(0,0,0,0.5); padding: 20px 0;
         }
-        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 10px; z-index: 100; }
+        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 8px; z-index: 100; }
         .btn { padding: 15px 20px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 50px; font-weight: bold; }
-        #debug { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 10px; color: #888; z-index: 10; }
+        #debug { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 12px; color: #888; z-index: 10; }
     </style>
 </head>
 <body>
-    <div id="label-container">TAP START</div>
+    <div id="label-container">STANDBY</div>
     <video id="video" autoplay playsinline muted></video>
     
     <div id="controls">
-        <button class="btn" id="startBtn" onclick="init()">START AI</button>
-        <button class="btn" id="switchBtn" onclick="cycleCameras()" style="display:none;">CYCLE CAM</button>
+        <button class="btn" id="startBtn" onclick="init()">START ACCURATE AI</button>
+        <button class="btn" id="saveBtn" onclick="savePhoto()" style="display:none;">📷 SAVE</button>
         <button class="btn" id="speakBtn" onclick="toggleSpeech()" style="display:none;">🔊 OFF</button>
     </div>
 
-    <div id="debug">Logs: <span id="log-text">Ready.</span></div>
+    <div id="debug">Status: <span id="log-text">Ready.</span></div>
 
     <script>
         const log = (msg) => document.getElementById('log-text').innerText = msg;
         const label = document.getElementById('label-container');
         const video = document.getElementById('video');
-        let currentStream, model, videoDevices = [], currentDeviceIndex = 0, speechEnabled = false, lastAnnounced = "";
+        let model, speechEnabled = false, lastAnnounced = "";
+        
+        // BUFFER FOR SMOOTHING
+        let predictionBuffer = [];
+        const BUFFER_SIZE = 12; 
 
         async function init() {
             document.getElementById('startBtn').style.display = 'none';
             try {
-                log("Downloading AI...");
+                log("Loading High-Accuracy Model...");
                 label.innerText = "LOADING...";
-                model = await mobilenet.load();
+                // Version 2, Alpha 1.0 is the most "ResNet-like" in accuracy
+                model = await mobilenet.load({ version: 2, alpha: 1.0 });
                 
-                log("Finding all cameras...");
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                videoDevices = devices.filter(d => d.kind === 'videoinput');
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
                 
-                if (videoDevices.length === 0) throw new Error("No cameras found");
-
-                await startCamera(videoDevices[currentDeviceIndex].deviceId);
-                
-                document.getElementById('switchBtn').style.display = 'block';
+                document.getElementById('saveBtn').style.display = 'block';
                 document.getElementById('speakBtn').style.display = 'block';
-                log("AI Active!");
+                log("Expert AI Online!");
                 predict();
             } catch (e) {
-                log("ERROR: " + e.message);
-                label.innerText = "ACCESS DENIED";
+                log("Error: " + e.message);
                 document.getElementById('startBtn').style.display = 'block';
             }
-        }
-
-        async function startCamera(deviceId) {
-            if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-            
-            log(`Opening Cam ${currentDeviceIndex + 1} of ${videoDevices.length}...`);
-            try {
-                currentStream = await navigator.mediaDevices.getUserMedia({
-                    video: { deviceId: { exact: deviceId } }
-                });
-            } catch {
-                currentStream = await navigator.mediaDevices.getUserMedia({ video: true });
-            }
-            
-            video.srcObject = currentStream;
-            return new Promise(r => { video.onloadeddata = () => { video.play(); r(); }; });
-        }
-
-        async function cycleCameras() {
-            currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
-            await startCamera(videoDevices[currentDeviceIndex].deviceId);
-        }
-
-        function toggleSpeech() {
-            speechEnabled = !speechEnabled;
-            document.getElementById('speakBtn').innerText = speechEnabled ? "🔊 ON" : "🔊 OFF";
-            if (speechEnabled) window.speechSynthesis.speak(new SpeechSynthesisUtterance("Voice active"));
         }
 
         async function predict() {
             if (model && video.readyState === 4) {
                 const res = await model.classify(video);
                 if (res.length > 0) {
-                    const top = res[0].className.split(',')[0].toUpperCase();
-                    label.innerText = top;
-                    if (speechEnabled && top !== lastAnnounced) {
-                        const msg = new SpeechSynthesisUtterance(top);
-                        window.speechSynthesis.cancel();
-                        window.speechSynthesis.speak(msg);
-                        lastAnnounced = top;
+                    const topResult = res[0];
+                    
+                    // Only process if confidence is > 25%
+                    if (topResult.probability > 0.25) {
+                        predictionBuffer.push(topResult.className.split(',')[0]);
+                        if (predictionBuffer.length > BUFFER_SIZE) predictionBuffer.shift();
+
+                        // Find the most frequent guess in the buffer (Mode)
+                        const mostFrequent = predictionBuffer.reduce((a, b, i, arr) => 
+                            (arr.filter(v => v === a).length >= arr.filter(v => v === b).length ? a : b)
+                        );
+
+                        const confidence = Math.round(topResult.probability * 100);
+                        label.innerText = `${mostFrequent.toUpperCase()} (${confidence}%)`;
+
+                        if (speechEnabled && mostFrequent !== lastAnnounced && confidence > 50) {
+                            const msg = new SpeechSynthesisUtterance(mostFrequent);
+                            window.speechSynthesis.cancel();
+                            window.speechSynthesis.speak(msg);
+                            lastAnnounced = mostFrequent;
+                        }
+                    } else {
+                        label.innerText = "ANALYZING...";
                     }
                 }
             }
             requestAnimationFrame(predict);
+        }
+
+        function toggleSpeech() {
+            speechEnabled = !speechEnabled;
+            document.getElementById('speakBtn').innerText = speechEnabled ? "🔊 ON" : "🔊 OFF";
+        }
+
+        function savePhoto() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = `detection_${label.innerText.split(' ')[0]}.png`;
+            a.click();
         }
     </script>
 </body>
