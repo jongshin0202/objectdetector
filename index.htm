@@ -2,17 +2,21 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Expert AI Object Detector</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voice AI Detector</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
-        #label-container { position: absolute; top: 8%; width: 100%; text-align: center; color: #00ff00; font-size: 36px; font-weight: bold; z-index: 10; text-shadow: 2px 2px 8px #000; pointer-events: none; }
-        #controls { position: absolute; bottom: 40px; width: 100%; display: flex; justify-content: center; gap: 10px; z-index: 100; }
-        .btn { padding: 15px 25px; font-size: 16px; background: #00ff00; color: #000; border: none; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,255,0,0.3); }
-        #debug { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 10px; color: #aaa; z-index: 10; }
+        #label-container { 
+            position: absolute; top: 5%; width: 100%; text-align: center; 
+            color: #00ff00; font-size: 32px; font-weight: bold; z-index: 10; 
+            text-shadow: 2px 2px 10px #000; background: rgba(0,0,0,0.3); padding: 15px 0;
+        }
+        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 10px; z-index: 100; }
+        .btn { padding: 15px 20px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 50px; font-weight: bold; }
+        #debug { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 10px; color: #888; z-index: 10; }
     </style>
 </head>
 <body>
@@ -20,8 +24,9 @@
     <video id="video" autoplay playsinline muted></video>
     
     <div id="controls">
-        <button class="btn" id="startBtn" onclick="init()">START CAMERA</button>
-        <button class="btn" id="switchBtn" onclick="switchCamera()" style="display:none;">SWITCH CAMERA</button>
+        <button class="btn" id="startBtn" onclick="init()">START AI</button>
+        <button class="btn" id="switchBtn" onclick="cycleCameras()" style="display:none;">CYCLE CAM</button>
+        <button class="btn" id="speakBtn" onclick="toggleSpeech()" style="display:none;">🔊 OFF</button>
     </div>
 
     <div id="debug">Logs: <span id="log-text">Ready.</span></div>
@@ -30,60 +35,73 @@
         const log = (msg) => document.getElementById('log-text').innerText = msg;
         const label = document.getElementById('label-container');
         const video = document.getElementById('video');
-        let currentStream;
-        let useFrontCamera = false;
-        let model;
+        let currentStream, model, videoDevices = [], currentDeviceIndex = 0, speechEnabled = false, lastAnnounced = "";
 
         async function init() {
             document.getElementById('startBtn').style.display = 'none';
             try {
-                log("Downloading AI Model...");
-                label.innerText = "LOADING AI...";
+                log("Downloading AI...");
+                label.innerText = "LOADING...";
                 model = await mobilenet.load();
                 
-                await startCamera();
-                document.getElementById('switchBtn').style.display = 'block';
+                log("Finding all cameras...");
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
                 
-                log("AI Running!");
+                if (videoDevices.length === 0) throw new Error("No cameras found");
+
+                await startCamera(videoDevices[currentDeviceIndex].deviceId);
+                
+                document.getElementById('switchBtn').style.display = 'block';
+                document.getElementById('speakBtn').style.display = 'block';
+                log("AI Active!");
                 predict();
             } catch (e) {
                 log("ERROR: " + e.message);
-                label.innerText = "RETRY NEEDED";
+                label.innerText = "ACCESS DENIED";
+                document.getElementById('startBtn').style.display = 'block';
             }
         }
 
-        async function startCamera() {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-            }
-
-            const constraints = {
-                video: { facingMode: useFrontCamera ? "user" : "environment" },
-                audio: false
-            };
-
-            log(`Starting ${useFrontCamera ? 'Front' : 'Back'} Camera...`);
-            currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-            video.srcObject = currentStream;
+        async function startCamera(deviceId) {
+            if (currentStream) currentStream.getTracks().forEach(t => t.stop());
             
-            return new Promise((resolve) => {
-                video.onloadedmetadata = () => {
-                    video.play();
-                    resolve();
-                };
-            });
+            log(`Opening Cam ${currentDeviceIndex + 1} of ${videoDevices.length}...`);
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: { exact: deviceId } }
+                });
+            } catch {
+                currentStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            }
+            
+            video.srcObject = currentStream;
+            return new Promise(r => { video.onloadeddata = () => { video.play(); r(); }; });
         }
 
-        async function switchCamera() {
-            useFrontCamera = !useFrontCamera;
-            await startCamera();
+        async function cycleCameras() {
+            currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+            await startCamera(videoDevices[currentDeviceIndex].deviceId);
+        }
+
+        function toggleSpeech() {
+            speechEnabled = !speechEnabled;
+            document.getElementById('speakBtn').innerText = speechEnabled ? "🔊 ON" : "🔊 OFF";
+            if (speechEnabled) window.speechSynthesis.speak(new SpeechSynthesisUtterance("Voice active"));
         }
 
         async function predict() {
             if (model && video.readyState === 4) {
-                const predictions = await model.classify(video);
-                if (predictions.length > 0) {
-                    label.innerText = predictions[0].className.split(',')[0].toUpperCase();
+                const res = await model.classify(video);
+                if (res.length > 0) {
+                    const top = res[0].className.split(',')[0].toUpperCase();
+                    label.innerText = top;
+                    if (speechEnabled && top !== lastAnnounced) {
+                        const msg = new SpeechSynthesisUtterance(top);
+                        window.speechSynthesis.cancel();
+                        window.speechSynthesis.speak(msg);
+                        lastAnnounced = top;
+                    }
                 }
             }
             requestAnimationFrame(predict);
