@@ -3,155 +3,98 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Expert AI Detector V10</title>
+    <title>AI Object Detector V11</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
         #canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
-        
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
-        
-        #header { background: rgba(0,0,0,0.7); padding: 15px; text-align: center; border-bottom: 2px solid #00ff00; pointer-events: auto; }
+        #header { position: absolute; top: 0; width: 100%; text-align: center; background: rgba(0,0,0,0.8); z-index: 10; padding: 15px 0; border-bottom: 2px solid #00ff00; }
         #label-container { color: #00ff00; font-size: 24px; font-weight: bold; }
-        
-        #footer { background: rgba(0,0,0,0.8); padding: 20px; pointer-events: auto; }
-        .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 15px; }
-        
-        .btn { padding: 12px 18px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        #footer { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); padding: 15px 0 30px 0; z-index: 100; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .row { display: flex; gap: 10px; margin-bottom: 5px; }
+        .btn { padding: 12px 20px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 8px; font-weight: bold; }
         #voiceBtn { background: #ffcc00; }
-        
-        .slider-box { width: 100%; text-align: center; color: #aaa; font-size: 12px; }
-        input[type=range] { width: 80%; accent-color: #00ff00; }
-
-        #debug { font-size: 10px; color: #666; margin-top: 10px; text-align: center; }
+        .slider-box { width: 80%; text-align: center; font-size: 12px; color: #aaa; }
+        input[type=range] { width: 100%; accent-color: #00ff00; margin-top: 5px; }
     </style>
 </head>
 <body>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
+    <div id="header"><div id="label-container">STANDBY</div></div>
 
-    <div id="ui-layer">
-        <div id="header">
-            <div id="label-container">SYSTEM READY</div>
+    <div id="footer">
+        <button class="btn" id="startBtn" onclick="init()" style="width: 80%; font-size: 18px;">🚀 START AI SYSTEM</button>
+        
+        <div class="row" id="mainControls" style="display:none;">
+            <button class="btn" onclick="savePhoto()">📷 SAVE</button>
+            <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
+            <button class="btn" id="voiceBtn" onclick="toggleVoice()">🔊 VOICE: OFF</button>
         </div>
 
-        <div id="footer">
-            <div class="controls" id="pre-start">
-                <button class="btn" style="width: 100%; font-size: 18px;" onclick="init()">🚀 LAUNCH AI SYSTEM</button>
-            </div>
-
-            <div class="controls" id="post-start" style="display:none;">
-                <button class="btn" onclick="savePhoto()">📷 SAVE</button>
-                <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
-                <button class="btn" id="voiceBtn" onclick="toggleVoice()">🔊 VOICE: OFF</button>
-            </div>
-
-            <div class="slider-box" id="slider-ui" style="display:none;">
-                Sensitivity: <span id="conf-val">60</span>%
-                <br>
-                <input type="range" min="10" max="95" value="60" id="conf-slider" oninput="updateSlider(this.value)">
-            </div>
-            
-            <div id="debug">Logs: <span id="log-text">Waiting...</span></div>
+        <div class="slider-box" id="sliderUI" style="display:none;">
+            Sensitivity: <span id="conf-val">65</span>% (Higher = More Accurate)
+            <input type="range" min="10" max="95" value="65" oninput="updateConf(this.value)">
         </div>
+        <div style="font-size: 10px; color: #555;" id="log-text">Ready.</div>
     </div>
 
     <script>
         const log = (msg) => document.getElementById('log-text').innerText = msg;
-        const label = document.getElementById('label-container');
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        
-        let detector, voiceEnabled = false, lastSeen = "", lastSpeakTime = 0;
-        let minConfidence = 0.6;
-        let videoDevices = [], currentDeviceIndex = 0, currentStream;
+        let detector, currentStream, voiceEnabled = false, minConf = 0.65, videoDevices = [], devIdx = 0, lastAnnounced = "";
 
         async function init() {
-            log("Opening Hardware...");
-            try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                videoDevices = devices.filter(d => d.kind === 'videoinput');
-                await startCamera(videoDevices[currentDeviceIndex]?.deviceId);
+            log("Opening camera...");
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            videoDevices = devices.filter(d => d.kind === 'videoinput');
+            await startCamera(videoDevices[devIdx]?.deviceId);
 
-                log("Loading COCO-SSD Model...");
-                label.innerText = "LOADING BRAIN...";
-                detector = await cocoSsd.load();
-                
-                document.getElementById('pre-start').style.display = 'none';
-                document.getElementById('post-start').style.display = 'flex';
-                document.getElementById('slider-ui').style.display = 'block';
-                
-                log("System Active!");
-                detect();
-            } catch (e) {
-                log("Error: " + e.message);
-            }
+            log("Downloading AI Brain... Please wait 10s...");
+            document.getElementById('label-container').innerText = "DOWNLOADING...";
+            detector = await cocoSsd.load();
+            
+            log("System Active!");
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('mainControls').style.display = 'flex';
+            document.getElementById('sliderUI').style.display = 'block';
+            detect();
         }
 
-        async function startCamera(deviceId) {
+        async function startCamera(id) {
             if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-            const constraints = deviceId ? { video: { deviceId: { exact: deviceId } } } : { video: { facingMode: 'environment' } };
-            currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+            currentStream = await navigator.mediaDevices.getUserMedia({ video: id ? { deviceId: { exact: id } } : { facingMode: 'environment' } });
             video.srcObject = currentStream;
             await video.play();
         }
 
-        async function cycleCameras() {
-            currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
-            await startCamera(videoDevices[currentDeviceIndex].deviceId);
-        }
-
-        function updateSlider(val) {
-            minConfidence = val / 100;
-            document.getElementById('conf-val').innerText = val;
-        }
+        function cycleCameras() { devIdx = (devIdx + 1) % videoDevices.length; startCamera(videoDevices[devIdx].deviceId); }
+        function updateConf(val) { minConf = val / 100; document.getElementById('conf-val').innerText = val; }
+        function toggleVoice() { voiceEnabled = !voiceEnabled; document.getElementById('voiceBtn').innerText = voiceEnabled ? "🔊 VOICE: ON" : "🔊 VOICE: OFF"; }
 
         async function detect() {
             if (!detector || video.readyState !== 4) { requestAnimationFrame(detect); return; }
-
             const predictions = await detector.detect(video);
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Filter by slider value
-            const valid = predictions.filter(p => p.score >= minConfidence);
-
-            if (valid.length > 0) {
-                const top = valid[0];
+            const filtered = predictions.filter(p => p.score >= minConf);
+            if (filtered.length > 0) {
+                const top = filtered[0];
                 const name = top.class.toUpperCase();
-                const score = Math.round(top.score * 100);
-                
-                label.innerText = `${name} (${score}%)`;
-                ctx.strokeStyle = "#00ff00";
-                ctx.lineWidth = 10;
-                ctx.strokeRect(...top.bbox);
-
-                if (voiceEnabled && name !== lastSeen && Date.now() - lastSpeakTime > 2500) {
-                    speak(name);
-                    lastSeen = name;
-                    lastSpeakTime = Date.now();
+                document.getElementById('label-container').innerText = `${name} (${Math.round(top.score*100)}%)`;
+                ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 8; ctx.strokeRect(...top.bbox);
+                if (voiceEnabled && name !== lastAnnounced) {
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(new SpeechSynthesisUtterance(name));
+                    lastAnnounced = name;
                 }
-            } else {
-                label.innerText = "SCANNING...";
-            }
+            } else { document.getElementById('label-container').innerText = "SCANNING..."; }
             requestAnimationFrame(detect);
-        }
-
-        function toggleVoice() {
-            voiceEnabled = !voiceEnabled;
-            const btn = document.getElementById('voiceBtn');
-            btn.innerText = voiceEnabled ? "🔊 VOICE: ON" : "🔊 VOICE: OFF";
-            btn.style.background = voiceEnabled ? "#00ff00" : "#ffcc00";
-            if (voiceEnabled) speak("Voice Active");
-        }
-
-        function speak(t) {
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance(t));
         }
 
         function savePhoto() {
@@ -161,7 +104,7 @@
             tCtx.drawImage(video, 0, 0);
             tCtx.drawImage(canvas, 0, 0);
             const a = document.createElement('a');
-            a.download = `AI_Capture_${Date.now()}.png`;
+            a.download = `AI_Detect_${Date.now()}.png`;
             a.href = temp.toDataURL();
             a.click();
         }
