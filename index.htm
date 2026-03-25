@@ -3,112 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>High-Accuracy AI Detector</title>
+    <title>Expert AI Detector V10</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
-        #label-container { 
-            position: absolute; top: 5%; width: 100%; text-align: center; 
-            color: #00ff00; font-size: 32px; font-weight: bold; z-index: 10; 
-            text-shadow: 2px 2px 10px #000; background: rgba(0,0,0,0.5); padding: 20px 0;
-        }
-        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 8px; z-index: 100; }
-        .btn { padding: 15px 20px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 50px; font-weight: bold; }
-        #debug { position: absolute; bottom: 5px; width: 100%; text-align: center; font-size: 12px; color: #888; z-index: 10; }
+        #canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+        
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+        
+        #header { background: rgba(0,0,0,0.7); padding: 15px; text-align: center; border-bottom: 2px solid #00ff00; pointer-events: auto; }
+        #label-container { color: #00ff00; font-size: 24px; font-weight: bold; }
+        
+        #footer { background: rgba(0,0,0,0.8); padding: 20px; pointer-events: auto; }
+        .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 15px; }
+        
+        .btn { padding: 12px 18px; font-size: 14px; background: #00ff00; color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        #voiceBtn { background: #ffcc00; }
+        
+        .slider-box { width: 100%; text-align: center; color: #aaa; font-size: 12px; }
+        input[type=range] { width: 80%; accent-color: #00ff00; }
+
+        #debug { font-size: 10px; color: #666; margin-top: 10px; text-align: center; }
     </style>
 </head>
 <body>
-    <div id="label-container">STANDBY</div>
     <video id="video" autoplay playsinline muted></video>
-    
-    <div id="controls">
-        <button class="btn" id="startBtn" onclick="init()">START ACCURATE AI</button>
-        <button class="btn" id="saveBtn" onclick="savePhoto()" style="display:none;">📷 SAVE</button>
-        <button class="btn" id="speakBtn" onclick="toggleSpeech()" style="display:none;">🔊 OFF</button>
-    </div>
+    <canvas id="canvas"></canvas>
 
-    <div id="debug">Status: <span id="log-text">Ready.</span></div>
+    <div id="ui-layer">
+        <div id="header">
+            <div id="label-container">SYSTEM READY</div>
+        </div>
+
+        <div id="footer">
+            <div class="controls" id="pre-start">
+                <button class="btn" style="width: 100%; font-size: 18px;" onclick="init()">🚀 LAUNCH AI SYSTEM</button>
+            </div>
+
+            <div class="controls" id="post-start" style="display:none;">
+                <button class="btn" onclick="savePhoto()">📷 SAVE</button>
+                <button class="btn" onclick="cycleCameras()">🔄 CAM</button>
+                <button class="btn" id="voiceBtn" onclick="toggleVoice()">🔊 VOICE: OFF</button>
+            </div>
+
+            <div class="slider-box" id="slider-ui" style="display:none;">
+                Sensitivity: <span id="conf-val">60</span>%
+                <br>
+                <input type="range" min="10" max="95" value="60" id="conf-slider" oninput="updateSlider(this.value)">
+            </div>
+            
+            <div id="debug">Logs: <span id="log-text">Waiting...</span></div>
+        </div>
+    </div>
 
     <script>
         const log = (msg) => document.getElementById('log-text').innerText = msg;
         const label = document.getElementById('label-container');
         const video = document.getElementById('video');
-        let model, speechEnabled = false, lastAnnounced = "";
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
         
-        // BUFFER FOR SMOOTHING
-        let predictionBuffer = [];
-        const BUFFER_SIZE = 12; 
+        let detector, voiceEnabled = false, lastSeen = "", lastSpeakTime = 0;
+        let minConfidence = 0.6;
+        let videoDevices = [], currentDeviceIndex = 0, currentStream;
 
         async function init() {
-            document.getElementById('startBtn').style.display = 'none';
+            log("Opening Hardware...");
             try {
-                log("Loading High-Accuracy Model...");
-                label.innerText = "LOADING...";
-                // Version 2, Alpha 1.0 is the most "ResNet-like" in accuracy
-                model = await mobilenet.load({ version: 2, alpha: 1.0 });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
+                await startCamera(videoDevices[currentDeviceIndex]?.deviceId);
+
+                log("Loading COCO-SSD Model...");
+                label.innerText = "LOADING BRAIN...";
+                detector = await cocoSsd.load();
                 
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-                });
-                video.srcObject = stream;
+                document.getElementById('pre-start').style.display = 'none';
+                document.getElementById('post-start').style.display = 'flex';
+                document.getElementById('slider-ui').style.display = 'block';
                 
-                document.getElementById('saveBtn').style.display = 'block';
-                document.getElementById('speakBtn').style.display = 'block';
-                log("Expert AI Online!");
-                predict();
+                log("System Active!");
+                detect();
             } catch (e) {
                 log("Error: " + e.message);
-                document.getElementById('startBtn').style.display = 'block';
             }
         }
 
-        async function predict() {
-            if (model && video.readyState === 4) {
-                const res = await model.classify(video);
-                if (res.length > 0) {
-                    const topResult = res[0];
-                    
-                    // Only process if confidence is > 25%
-                    if (topResult.probability > 0.25) {
-                        predictionBuffer.push(topResult.className.split(',')[0]);
-                        if (predictionBuffer.length > BUFFER_SIZE) predictionBuffer.shift();
+        async function startCamera(deviceId) {
+            if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+            const constraints = deviceId ? { video: { deviceId: { exact: deviceId } } } : { video: { facingMode: 'environment' } };
+            currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = currentStream;
+            await video.play();
+        }
 
-                        // Find the most frequent guess in the buffer (Mode)
-                        const mostFrequent = predictionBuffer.reduce((a, b, i, arr) => 
-                            (arr.filter(v => v === a).length >= arr.filter(v => v === b).length ? a : b)
-                        );
+        async function cycleCameras() {
+            currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+            await startCamera(videoDevices[currentDeviceIndex].deviceId);
+        }
 
-                        const confidence = Math.round(topResult.probability * 100);
-                        label.innerText = `${mostFrequent.toUpperCase()} (${confidence}%)`;
+        function updateSlider(val) {
+            minConfidence = val / 100;
+            document.getElementById('conf-val').innerText = val;
+        }
 
-                        if (speechEnabled && mostFrequent !== lastAnnounced && confidence > 50) {
-                            const msg = new SpeechSynthesisUtterance(mostFrequent);
-                            window.speechSynthesis.cancel();
-                            window.speechSynthesis.speak(msg);
-                            lastAnnounced = mostFrequent;
-                        }
-                    } else {
-                        label.innerText = "ANALYZING...";
-                    }
+        async function detect() {
+            if (!detector || video.readyState !== 4) { requestAnimationFrame(detect); return; }
+
+            const predictions = await detector.detect(video);
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Filter by slider value
+            const valid = predictions.filter(p => p.score >= minConfidence);
+
+            if (valid.length > 0) {
+                const top = valid[0];
+                const name = top.class.toUpperCase();
+                const score = Math.round(top.score * 100);
+                
+                label.innerText = `${name} (${score}%)`;
+                ctx.strokeStyle = "#00ff00";
+                ctx.lineWidth = 10;
+                ctx.strokeRect(...top.bbox);
+
+                if (voiceEnabled && name !== lastSeen && Date.now() - lastSpeakTime > 2500) {
+                    speak(name);
+                    lastSeen = name;
+                    lastSpeakTime = Date.now();
                 }
+            } else {
+                label.innerText = "SCANNING...";
             }
-            requestAnimationFrame(predict);
+            requestAnimationFrame(detect);
         }
 
-        function toggleSpeech() {
-            speechEnabled = !speechEnabled;
-            document.getElementById('speakBtn').innerText = speechEnabled ? "🔊 ON" : "🔊 OFF";
+        function toggleVoice() {
+            voiceEnabled = !voiceEnabled;
+            const btn = document.getElementById('voiceBtn');
+            btn.innerText = voiceEnabled ? "🔊 VOICE: ON" : "🔊 VOICE: OFF";
+            btn.style.background = voiceEnabled ? "#00ff00" : "#ffcc00";
+            if (voiceEnabled) speak("Voice Active");
+        }
+
+        function speak(t) {
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance(t));
         }
 
         function savePhoto() {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
+            const temp = document.createElement('canvas');
+            temp.width = video.videoWidth; temp.height = video.videoHeight;
+            const tCtx = temp.getContext('2d');
+            tCtx.drawImage(video, 0, 0);
+            tCtx.drawImage(canvas, 0, 0);
             const a = document.createElement('a');
-            a.href = canvas.toDataURL('image/png');
-            a.download = `detection_${label.innerText.split(' ')[0]}.png`;
+            a.download = `AI_Capture_${Date.now()}.png`;
+            a.href = temp.toDataURL();
             a.click();
         }
     </script>
