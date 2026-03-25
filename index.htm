@@ -3,34 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>AI Box Detector Fix</title>
+    <title>AI Master Detector</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
-        #container { position: relative; width: 100%; height: 100%; }
-        #video { width: 100%; height: 100%; object-fit: cover; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
-        #touch-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
-        #label-container { position: absolute; top: 10%; width: 100%; text-align: center; color: #00ff00; font-size: 32px; font-weight: bold; z-index: 15; text-shadow: 2px 2px 10px #000; pointer-events: none; }
-        .bottom-panel { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.8); z-index: 20; padding: 20px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        input[type=range] { width: 80%; height: 40px; }
-        button { padding: 15px 30px; border-radius: 10px; border: none; font-weight: bold; }
-        #startBtn { background: #00ff00; font-size: 20px; }
+        #wrapper { position: relative; width: 100vw; height: 100vh; }
+        #video { width: 100%; height: 100%; object-fit: cover; position: absolute; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+        #touch-zone { position: absolute; top: 0; left: 0; width: 100%; height: 80%; z-index: 10; }
+        #label-container { position: absolute; top: 10%; width: 100%; text-align: center; color: #00ff00; font-size: 38px; font-weight: bold; z-index: 15; text-shadow: 3px 3px 10px #000; pointer-events: none; }
+        .panel { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.8); z-index: 20; padding: 20px 0; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+        input[type=range] { width: 80%; height: 50px; }
+        button { padding: 15px 35px; border-radius: 12px; border: none; font-weight: bold; background: #fff; }
+        #startBtn { background: #00ff00; font-size: 22px; padding: 25px 70px; }
     </style>
 </head>
 <body>
 
-    <div id="container">
+    <div id="wrapper">
         <div id="label-container">TAP START</div>
         <video id="video" autoplay playsinline muted></video>
         <canvas id="canvas"></canvas>
-        <div id="touch-layer" onclick="handleTouch()"></div>
+        <div id="touch-zone" onclick="handleTouch()"></div>
         
-        <div class="bottom-panel">
+        <div class="panel">
             <div id="controls" style="display:none; width: 100%; text-align: center;">
-                <button onclick="switchCamera()" style="margin-bottom:10px;">SWITCH CAMERA</button><br>
-                <label>Sensitivity: <span id="sVal">50</span></label><br>
+                <button onclick="switchCamera()">SWITCH CAMERA</button><br><br>
+                <label>Sensitivity (High=Active): <span id="sVal">50</span></label><br>
                 <input type="range" id="sens" min="1" max="99" value="50" oninput="document.getElementById('sVal').innerText=this.value">
             </div>
             <button id="startBtn" onclick="initApp()">START CAMERA</button>
@@ -49,7 +49,7 @@
             document.getElementById('label-container').innerText = "LOADING AI...";
             model = await cocoSsd.load();
             await startCam();
-            renderLoop();
+            requestAnimationFrame(renderLoop);
         }
 
         async function startCam() {
@@ -59,9 +59,9 @@
             video.srcObject = stream;
             video.onloadedmetadata = () => {
                 video.play();
-                // Match canvas pixels to visual display size
-                canvas.width = video.offsetWidth;
-                canvas.height = video.offsetHeight;
+                // Match internal canvas resolution to the actual element size
+                canvas.width = canvas.clientWidth;
+                canvas.height = canvas.clientHeight;
                 document.getElementById('label-container').innerText = "TOUCH TO SCAN";
             };
         }
@@ -74,17 +74,41 @@
         async function renderLoop() {
             if (model && video.readyState === 4) {
                 const predictions = await model.detect(video);
+                
+                // Clear and Redraw
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // Calculate scaling factors
-                const scaleX = canvas.width / video.videoWidth;
-                const scaleY = canvas.height / video.videoHeight;
+                // BOX SCALING LOGIC:
+                const vW = video.videoWidth;
+                const vH = video.videoHeight;
+                const cW = canvas.width;
+                const cH = canvas.height;
+
+                const videoRatio = vW / vH;
+                const canvasRatio = cW / cH;
+
+                let xOffset = 0, yOffset = 0, renderW = cW, renderH = cH;
+
+                if (videoRatio > canvasRatio) {
+                    renderW = cH * videoRatio;
+                    xOffset = (cW - renderW) / 2;
+                } else {
+                    renderH = cW / videoRatio;
+                    yOffset = (cH - renderH) / 2;
+                }
 
                 predictions.forEach(p => {
+                    const [x, y, w, h] = p.bbox;
                     ctx.strokeStyle = "#00FF00";
-                    ctx.lineWidth = 5;
-                    // Scale the box to fit the screen
-                    ctx.strokeRect(p.bbox[0] * scaleX, p.bbox[1] * scaleY, p.bbox[2] * scaleX, p.bbox[3] * scaleY);
+                    ctx.lineWidth = 6;
+                    
+                    // The Magic Formula to map AI coords to Screen coords
+                    const drawX = (x / vW) * renderW + xOffset;
+                    const drawY = (y / vH) * renderH + yOffset;
+                    const drawW = (w / vW) * renderW;
+                    const drawH = (h / vH) * renderH;
+
+                    ctx.strokeRect(drawX, drawY, drawW, drawH);
                 });
             }
             requestAnimationFrame(renderLoop);
@@ -93,19 +117,20 @@
         async function handleTouch() {
             if (!model) return;
             
-            // Triple Pulse Vibration
-            if (navigator.vibrate) navigator.vibrate([100, 30, 100, 30, 100]);
+            // Triple forceful vibration
+            if (navigator.vibrate) navigator.vibrate([150, 50, 150, 50, 150]);
 
             const predictions = await model.detect(video);
-            const sensitivity = document.getElementById('sens').value;
-            const threshold = (100 - sensitivity) / 100;
+            const sens = document.getElementById('sens').value;
+            const threshold = (100 - sens) / 100;
 
             if (predictions.length > 0) {
                 const best = predictions[0];
                 if (best.score >= threshold) {
                     const text = best.class.toUpperCase();
                     document.getElementById('label-container').innerText = text;
-                    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+                    const speech = new SpeechSynthesisUtterance(text);
+                    window.speechSynthesis.speak(speech);
                 }
             }
         }
